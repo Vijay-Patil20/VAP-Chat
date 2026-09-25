@@ -1,52 +1,67 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { getDemoChat, saveDemoChat } from '../utils/demoChat'
 
 function ChatRoom() {
   const [searchParams] = useSearchParams()
   const code = searchParams.get('code')
 
-  const [chat, setChat] = useState(() => {
-  if (!code) {
-    return null
+  const [chatExists, setChatExists] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    async function verifyChat() {
+      if (!code) {
+        setError('No chat code was provided.')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const response = await fetch(
+          `/api/chat/join?code=${encodeURIComponent(code)}`
+        )
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          setError(
+            result.message || 'Chat not found.'
+          )
+          return
+        }
+
+        setChatExists(true)
+      } catch (error) {
+        console.error(error)
+        setError(
+          'Unable to connect to the chat. Please try again.'
+        )
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    verifyChat()
+  }, [code])
+
+  if (loading) {
+    return (
+      <main className="app">
+        <section className="hero">
+          <div className="logo">VAP CHAT</div>
+
+          <h1>Joining Chat...</h1>
+
+          <p className="subtitle">
+            Connecting to your temporary chat.
+          </p>
+        </section>
+      </main>
+    )
   }
 
-  return getDemoChat(code)
-})
-
-const [message, setMessage] = useState('')
-
-  function handleSendMessage() {
-    const trimmedMessage = message.trim()
-
-    if (!trimmedMessage || !chat) {
-      return
-    }
-
-    const newMessage = {
-      id: crypto.randomUUID(),
-      text: trimmedMessage,
-      sender: 'you',
-      timestamp: new Date().toISOString(),
-    }
-
-    const updatedChat = {
-      ...chat,
-      messages: [...chat.messages, newMessage],
-    }
-
-    saveDemoChat(updatedChat)
-    setChat(updatedChat)
-    setMessage('')
-  }
-
-  function handleKeyDown(event) {
-    if (event.key === 'Enter') {
-      handleSendMessage()
-    }
-  }
-
-  if (!chat) {
+  if (error || !chatExists) {
     return (
       <main className="app">
         <section className="hero">
@@ -55,10 +70,13 @@ const [message, setMessage] = useState('')
           <h1>Chat Not Found</h1>
 
           <p className="subtitle">
-            This chat does not exist in this browser.
+            {error || 'This chat does not exist.'}
           </p>
 
-          <Link to="/" className="secondary-button">
+          <Link
+            to="/"
+            className="secondary-button"
+          >
             Back to Home
           </Link>
         </section>
@@ -74,64 +92,40 @@ const [message, setMessage] = useState('')
             <div className="logo">VAP CHAT</div>
 
             <span className="connection-status">
-              ● Demo Mode
+              ● Connected
             </span>
           </div>
 
           <span className="chat-code">
-            {chat.code}
+            {code}
           </span>
         </div>
 
         <div className="messages">
-          {chat.messages.length === 0 ? (
-            <div className="empty-chat">
-              No messages yet. Say hello!
-            </div>
-          ) : (
-            chat.messages.map((item) => (
-            <div
-  key={item.id}
-  className={`message ${
-    item.sender === 'you'
-      ? 'sent'
-      : 'received'
-  }`}
->
-  <div>{item.text}</div>
-
-  <span className="message-time">
-    {new Date(item.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}
-  </span>
-</div>
-            ))
-          )}
+          <div className="empty-chat">
+            Chat connected successfully.
+          </div>
         </div>
 
         <div className="message-input">
           <input
             type="text"
             placeholder="Type a message..."
-            value={message}
-            onChange={(event) =>
-              setMessage(event.target.value)
-            }
-            onKeyDown={handleKeyDown}
-            maxLength={2000}
+            disabled
           />
 
           <button
             className="send-button"
-            onClick={handleSendMessage}
+            disabled
           >
             Send
           </button>
         </div>
 
-        <Link to="/" className="leave-button">
+        <Link
+          to="/"
+          className="leave-button"
+        >
           Leave Chat
         </Link>
       </section>

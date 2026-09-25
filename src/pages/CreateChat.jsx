@@ -1,20 +1,47 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { createDemoChat } from '../utils/demoChat'
 
 function CreateChat() {
   const navigate = useNavigate()
-  const [chat, setChat] = useState(null)
 
-  function handleCreateChat() {
-    const newChat = createDemoChat()
-    setChat(newChat)
+  const [chat, setChat] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  async function handleCreateChat() {
+    setLoading(true)
+    setError('')
+
+    try {
+      const response = await fetch('/api/chat/create')
+
+      if (!response.ok) {
+        throw new Error('Unable to create chat.')
+      }
+
+      const newChat = await response.json()
+
+      setChat(newChat)
+    } catch (error) {
+      console.error(error)
+      setError('Unable to create chat. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   function handleEnterChat() {
-    if (chat) {
+    if (chat?.code) {
       navigate(`/chat?code=${chat.code}`)
     }
+  }
+
+  async function handleCopyCode() {
+    if (!chat?.code) {
+      return
+    }
+
+    await navigator.clipboard.writeText(chat.code)
   }
 
   return (
@@ -31,12 +58,19 @@ function CreateChat() {
               with someone.
             </p>
 
+            {error && (
+              <p className="error-message">
+                {error}
+              </p>
+            )}
+
             <div className="actions">
               <button
                 className="primary-button"
                 onClick={handleCreateChat}
+                disabled={loading}
               >
-                Create Chat
+                {loading ? 'Creating...' : 'Create Chat'}
               </button>
 
               <Link to="/" className="secondary-button">
@@ -67,9 +101,7 @@ function CreateChat() {
 
               <button
                 className="secondary-button"
-                onClick={() => {
-                  navigator.clipboard.writeText(chat.code)
-                }}
+                onClick={handleCopyCode}
               >
                 Copy Code
               </button>

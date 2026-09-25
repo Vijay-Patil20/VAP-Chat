@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { getDemoChat } from '../utils/demoChat'
 
 function JoinChat() {
   const navigate = useNavigate()
 
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  function handleJoinChat() {
+  async function handleJoinChat() {
     const normalizedCode = code.trim().toUpperCase()
 
     if (!normalizedCode) {
@@ -16,15 +16,31 @@ function JoinChat() {
       return
     }
 
-    const chat = getDemoChat(normalizedCode)
-
-    if (!chat) {
-      setError('Chat not found. Please check the code and try again.')
-      return
-    }
-
+    setLoading(true)
     setError('')
-    navigate(`/chat?code=${chat.code}`)
+
+    try {
+      const response = await fetch(
+        `/api/chat/join?code=${encodeURIComponent(normalizedCode)}`
+      )
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        setError(
+          result.message ||
+            'Chat not found. Please check the code and try again.'
+        )
+        return
+      }
+
+      navigate(`/chat?code=${result.code}`)
+    } catch (error) {
+      console.error(error)
+      setError('Unable to join chat. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -62,8 +78,9 @@ function JoinChat() {
           <button
             className="primary-button"
             onClick={handleJoinChat}
+            disabled={loading}
           >
-            Join Chat
+            {loading ? 'Joining...' : 'Join Chat'}
           </button>
 
           <Link to="/" className="secondary-button">
