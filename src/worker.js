@@ -124,6 +124,29 @@ export class ChatRoom extends DurableObject {
       return
     }
 
+    /*
+     * Heartbeat
+     *
+     * The browser will periodically send
+     * a "ping" message.
+     *
+     * The server responds with "pong"
+     * to confirm that the connection is alive.
+     */
+    if (data.type === 'ping') {
+      ws.send(
+        JSON.stringify({
+          type: 'pong',
+          timestamp: new Date().toISOString(),
+        })
+      )
+
+      return
+    }
+
+    /*
+     * Validate normal chat message
+     */
     if (
       data.type !== 'message' ||
       typeof data.text !== 'string'
@@ -140,10 +163,16 @@ export class ChatRoom extends DurableObject {
 
     const text = data.text.trim()
 
+    /*
+     * Ignore empty messages
+     */
     if (!text) {
       return
     }
 
+    /*
+     * Limit message length
+     */
     if (text.length > 2000) {
       ws.send(
         JSON.stringify({
@@ -156,15 +185,20 @@ export class ChatRoom extends DurableObject {
       return
     }
 
+    /*
+     * Create chat message
+     */
     const chatMessage = JSON.stringify({
       type: 'message',
       id: crypto.randomUUID(),
+      senderId: data.senderId,
       text,
       timestamp: new Date().toISOString(),
     })
 
     /*
-     * Send message to everyone in this chat room
+     * Send message to everyone
+     * in this chat room
      */
     for (const client of this.ctx.getWebSockets()) {
       if (client.readyState === WebSocket.OPEN) {
