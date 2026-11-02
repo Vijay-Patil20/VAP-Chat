@@ -111,6 +111,11 @@ function ChatRoom() {
       socketRef.current = socket
 
       socket.onopen = () => {
+        if (!isEffectActive) {
+          socket.close()
+          return
+        }
+
         reconnectAttemptsRef.current = 0
         setConnectionStatus('Connected')
         setLoading(false)
@@ -118,6 +123,10 @@ function ChatRoom() {
       }
 
       socket.onmessage = (event) => {
+        if (!isEffectActive) {
+          return
+        }
+
         try {
           const data = JSON.parse(event.data)
 
