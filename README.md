@@ -11,7 +11,6 @@ VAP Chat is a temporary, anonymous messaging application for simple conversation
 - Limit each connection to five messages per rolling ten-second window.
 - Allow at most three chat creations per minute per public IP (burst of three).
 - Allow at most 20 join attempts and 20 WebSocket connection attempts per minute per public IP (burst of 20 for each route).
-- Limit each connection to five messages per rolling ten-second window.
 - Reconnect automatically after a temporary connection loss.
 - Expire rooms after 15 minutes without chat activity.
 - Close connected participants and clear room storage when a room expires.
