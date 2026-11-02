@@ -1,31 +1,71 @@
 # VAP Chat
 
-VAP Chat is a temporary, anonymous messaging platform designed for simple conversations without requiring an account, name, email, or phone number.
+VAP Chat is a temporary, anonymous messaging application for simple conversations without an account, name, email address, or phone number.
 
-## Current Status
+## Current capabilities
 
-🚧 Frontend MVP — Development
+- Create a chat and receive a shareable random code.
+- Join an existing chat using its code.
+- Exchange messages in real time over WebSockets.
+- Reconnect automatically after a temporary connection loss.
+- Expire rooms after 15 minutes without chat activity.
+- Close connected participants and clear room storage when a room expires.
+- Responsive interface for desktop and mobile.
 
-The current version is a frontend prototype. Chat sessions and messages are stored locally in the browser for development and testing.
+## How temporary chats work
 
-## Features
+A room's 15-minute inactivity window starts when it is created. The timer is reset when someone joins or reconnects, or when a valid non-empty chat message is sent.
 
-- Anonymous chat interface
-- Create a temporary chat
-- Generate a unique chat code
-- Share chat code with another person
-- Join a chat using the code
-- Send messages
-- Enter-to-send support
-- Local message persistence
-- Responsive mobile-friendly interface
+WebSocket heartbeat pings do not count as activity. Simply leaving the chat open and reading messages does not keep it alive.
 
-## Current Architecture
+Cloudflare Durable Object Alarms perform expiry on the server, including when no browser is connected. When a room expires, connected sockets are closed and the Durable Object storage is cleared. Subsequent attempts to join receive a not-found response.
+
+The current chat implementation broadcasts messages in real time but does not persist message history. Messages are therefore not available to users who join after they were sent or reconnect after missing them.
+
+## Architecture
 
 ```text
-React + Vite
-      │
-      ├── Home
-      ├── Create Chat
-      ├── Join Chat
-      └── Chat Room
+React + Vite frontend
+        |
+        | same-origin HTTP and WebSocket requests
+        v
+Cloudflare Worker
+        |
+        | one Durable Object per chat code
+        v
+Cloudflare Durable Object (SQLite storage)
+        |
+        +-- room creation and activity timestamps
+        +-- 15-minute inactivity alarm
+        +-- WebSocket connections and message broadcast
+        +-- expiry and storage cleanup
+```
+
+## Local development
+
+Requirements: Node.js 22.12+ (or a compatible newer LTS release) and npm.
+
+```bash
+npm install
+npm run dev
+```
+
+## Validation
+
+```bash
+npm run lint
+npm test
+npm run build
+npm audit --omit=dev
+```
+
+## Deployment
+
+The project uses the Cloudflare Vite plugin and Wrangler. Review the Cloudflare Worker and Durable Object configuration in `wrangler.jsonc` before deploying.
+
+## Current limitations
+
+- Chat messages are not persisted or replayed after reconnect.
+- There is no participant authentication; possession of a valid chat code grants access.
+- The 15-minute inactivity duration is currently a code constant and is not user-configurable.
+- Rate limits and participant limits have not yet been implemented.
