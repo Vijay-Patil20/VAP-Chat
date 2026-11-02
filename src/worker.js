@@ -255,7 +255,7 @@ export class ChatRoom extends DurableObject {
       messageTimestamps: recentMessages,
     })
 
-    // A valid, rate-limited message resets the inactivity timer.
+    // A valid message within the rate limit resets the inactivity timer.
     const active = await this.createLifecycle().isActive({
       touch: true,
     })
@@ -375,7 +375,7 @@ export default {
       const roomStatus = await response.json()
 
       if (
-        roomStatus.isChatFull(activeConnections)
+        isChatFull(roomStatus.activeConnections)
       ) {
         return Response.json(
           {
@@ -448,7 +448,7 @@ export default {
       const roomStatus = await statusResponse.json()
 
       if (
-        roomStatus.isChatFull(activeConnections)
+        isChatFull(roomStatus.activeConnections)
       ) {
         return Response.json(
           {
