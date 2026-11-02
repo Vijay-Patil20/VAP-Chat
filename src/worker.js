@@ -3,6 +3,14 @@
 import { DurableObject } from 'cloudflare:workers'
 import { ChatLifecycle } from './utils/chatLifecycle.js'
 import { normalizeChatCode } from './utils/chatCode.js'
+import { RateLimiter } from './rateLimiter.js'
+import { isChatFull } from './utils/participantLimit.js'
+import {
+  getRecentMessageTimestamps,
+  isMessageRateLimited,
+} from './utils/messageRateLimit.js'
+
+export { RateLimiter }
 
 const CHAT_CODE_CHARACTERS =
   'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -22,6 +30,52 @@ function generateChatCode() {
   }
 
   return code.slice(0, 3) + '-' + code.slice(3)
+}
+
+async function checkRateLimit(request, env, scope) {
+  const clientAddress =
+    request.headers.get('CF-Connecting-IP') ||
+    'local-development'
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(clientAddress)
+  )
+  const clientKey = Array.from(new Uint8Array(digest))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('')
+
+  const limiterId = env.RATE_LIMITER.idFromName(clientKey)
+  const limiter = env.RATE_LIMITER.get(limiterId)
+  const response = await limiter.fetch(
+    new Request('https://rate-limiter/consume', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ scope }),
+    })
+  )
+  const decision = await response.json()
+
+  if (!response.ok || !decision.allowed) {
+    const retryAfter = decision.retryAfterSeconds || 1
+
+    return Response.json(
+      {
+        status: 'rate_limited',
+        message: 'Too many requests. Please wait before trying again.',
+        retryAfterSeconds: retryAfter,
+      },
+      {
+        status: response.ok ? 429 : 503,
+        headers: {
+          'Retry-After': String(retryAfter),
+        },
+      }
+    )
+  }
+
+  return null
 }
 
 export class ChatRoom extends DurableObject {
@@ -57,10 +111,15 @@ export class ChatRoom extends DurableObject {
       const createdAt = await this.ctx.storage.get(
         'createdAt'
       )
+      const activeConnections = this.ctx
+        .getWebSockets()
+        .filter((socket) => socket.readyState === WebSocket.OPEN)
+        .length
 
       return Response.json({
         status: 'found',
         createdAt,
+        activeConnections,
       })
     }
 
@@ -86,10 +145,28 @@ export class ChatRoom extends DurableObject {
         )
       }
 
+      const activeConnections = this.ctx
+        .getWebSockets()
+        .filter((socket) => socket.readyState === WebSocket.OPEN)
+        .length
+
+      if (isChatFull(activeConnections)) {
+        return Response.json(
+          {
+            status: 'full',
+            message: 'This chat already has two participants.',
+          },
+          { status: 409 }
+        )
+      }
+
       const webSocketPair = new WebSocketPair()
       const [client, server] = Object.values(webSocketPair)
 
       this.ctx.acceptWebSocket(server)
+      server.serializeAttachment({
+        messageTimestamps: [],
+      })
       await lifecycle.touchActivity()
 
       return new Response(null, {
@@ -98,9 +175,7 @@ export class ChatRoom extends DurableObject {
       })
     }
 
-    return new Response(
-      'VAP Chat Room is working.'
-    )
+    return new Response('Not Found', { status: 404 })
   }
 
   async alarm() {
@@ -159,7 +234,28 @@ export class ChatRoom extends DurableObject {
       return
     }
 
-    // A valid message resets the inactivity timer.
+    const now = Date.now()
+    const attachment = ws.deserializeAttachment() || {}
+    const recentMessages = getRecentMessageTimestamps(
+      attachment.messageTimestamps,
+      now
+    )
+
+    if (isMessageRateLimited(recentMessages)) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        code: 'RATE_LIMITED',
+        message: 'You are sending messages too quickly. Please wait a few seconds.',
+      }))
+      return
+    }
+
+    recentMessages.push(now)
+    ws.serializeAttachment({
+      messageTimestamps: recentMessages,
+    })
+
+    // A valid message within the rate limit resets the inactivity timer.
     const active = await this.createLifecycle().isActive({
       touch: true,
     })
@@ -206,6 +302,16 @@ export default {
     }
 
     if (url.pathname === '/api/chat/create') {
+      const rateLimitResponse = await checkRateLimit(
+        request,
+        env,
+        'create'
+      )
+
+      if (rateLimitResponse) {
+        return rateLimitResponse
+      }
+
       const code = generateChatCode()
       const chatRoomId = env.CHAT_ROOM.idFromName(code)
       const chatRoom = env.CHAT_ROOM.get(chatRoomId)
@@ -223,6 +329,16 @@ export default {
     }
 
     if (url.pathname === '/api/chat/join') {
+      const rateLimitResponse = await checkRateLimit(
+        request,
+        env,
+        'join'
+      )
+
+      if (rateLimitResponse) {
+        return rateLimitResponse
+      }
+
       const code = url.searchParams
         .get('code')
         ?.trim()
@@ -256,6 +372,20 @@ export default {
         )
       }
 
+      const roomStatus = await response.json()
+
+      if (
+        isChatFull(roomStatus.activeConnections)
+      ) {
+        return Response.json(
+          {
+            status: 'full',
+            message: 'This chat already has two participants.',
+          },
+          { status: 409 }
+        )
+      }
+
       return Response.json({
         code: normalizedCode,
         status: 'found',
@@ -263,6 +393,16 @@ export default {
     }
 
     if (url.pathname === '/api/chat/ws') {
+      const rateLimitResponse = await checkRateLimit(
+        request,
+        env,
+        'websocket'
+      )
+
+      if (rateLimitResponse) {
+        return rateLimitResponse
+      }
+
       const code = url.searchParams
         .get('code')
         ?.trim()
@@ -305,11 +445,24 @@ export default {
         )
       }
 
+      const roomStatus = await statusResponse.json()
+
+      if (
+        isChatFull(roomStatus.activeConnections)
+      ) {
+        return Response.json(
+          {
+            status: 'full',
+            message: 'This chat already has two participants.',
+          },
+          { status: 409 }
+        )
+      }
+
       return chatRoom.fetch(
         new Request('https://chat-room/websocket', request)
       )
     }
-
 
     return new Response(
       'Not Found',
