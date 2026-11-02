@@ -11,10 +11,7 @@ function ChatRoom() {
   const reconnectAttemptsRef = useRef(0)
   const shouldReconnectRef = useRef(true)
 
-  const [clientId] = useState(() =>
-    crypto.randomUUID()
-  )
-
+  const [clientId] = useState(() => crypto.randomUUID())
   const [chatExists, setChatExists] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -24,11 +21,14 @@ function ChatRoom() {
   const [message, setMessage] = useState('')
 
   useEffect(() => {
-    let isInitialConnection = true
+    // React StrictMode runs effect setup/cleanup twice in development.
+    // Reset the shared reconnect flag for each active effect instance.
+    shouldReconnectRef.current = true
+    reconnectAttemptsRef.current = 0
 
-    /*
-     * Stop the heartbeat timer.
-     */
+    let isEffectActive = true
+
+
     function stopHeartbeat() {
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current)
@@ -36,89 +36,54 @@ function ChatRoom() {
       }
     }
 
-    /*
-     * Start the heartbeat timer.
-     */
     function startHeartbeat(socket) {
       stopHeartbeat()
 
       heartbeatRef.current = setInterval(() => {
-        if (
-          socket.readyState ===
-          WebSocket.OPEN
-        ) {
-          socket.send(
-            JSON.stringify({
-              type: 'ping',
-            })
-          )
-
-          console.log(
-            'Heartbeat ping sent'
-          )
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'ping' }))
         }
       }, 20000)
     }
 
-    /*
-     * Schedule another connection attempt.
-     */
-    function scheduleReconnect(connectWebSocket) {
-      if (!shouldReconnectRef.current) {
+    function scheduleReconnect(reconnect) {
+      if (
+        !isEffectActive ||
+        !shouldReconnectRef.current ||
+        reconnectTimerRef.current
+      ) {
         return
       }
 
-      if (reconnectTimerRef.current) {
-        return
-      }
-
-      const attempt =
-        reconnectAttemptsRef.current
-
-      const delay =
-        Math.min(
-          1000 * Math.pow(2, attempt),
-          10000
-        )
-
-      reconnectAttemptsRef.current =
-        attempt + 1
-
-      console.log(
-        `Reconnecting in ${delay / 1000} seconds...`
+      const attempt = reconnectAttemptsRef.current
+      const delay = Math.min(
+        1000 * Math.pow(2, attempt),
+        10000
       )
 
+      reconnectAttemptsRef.current = attempt + 1
       setConnectionStatus('Reconnecting...')
 
-      reconnectTimerRef.current =
-        setTimeout(() => {
-          reconnectTimerRef.current = null
-          connectWebSocket()
-        }, delay)
+      reconnectTimerRef.current = setTimeout(() => {
+        reconnectTimerRef.current = null
+        reconnect()
+      }, delay)
     }
 
-    /*
-     * Create a WebSocket connection.
-     */
     function connectWebSocket() {
       if (
+        !isEffectActive ||
         !shouldReconnectRef.current ||
         !code
       ) {
         return
       }
 
-      /*
-       * Don't create another connection if
-       * one is already open or connecting.
-       */
       if (
         socketRef.current &&
         (
-          socketRef.current.readyState ===
-            WebSocket.OPEN ||
-          socketRef.current.readyState ===
-            WebSocket.CONNECTING
+          socketRef.current.readyState === WebSocket.OPEN ||
+          socketRef.current.readyState === WebSocket.CONNECTING
         )
       ) {
         return
@@ -131,75 +96,59 @@ function ChatRoom() {
       )
 
       const protocol =
-        window.location.protocol === 'https:'
-          ? 'wss:'
-          : 'ws:'
-
+        window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const socketUrl =
-        `${protocol}//${window.location.host}` +
-        `/api/chat/ws?code=${encodeURIComponent(code)}`
-
+        protocol + '//' + window.location.host +
+        '/api/chat/ws?code=' + encodeURIComponent(code)
       const socket = new WebSocket(socketUrl)
 
       socketRef.current = socket
 
-      /*
-       * WebSocket connected.
-       */
       socket.onopen = () => {
-        console.log(
-          'WebSocket connected'
-        )
+        if (!isEffectActive) {
+          socket.close()
+          return
+        }
 
         reconnectAttemptsRef.current = 0
-
         setConnectionStatus('Connected')
         setLoading(false)
-
         startHeartbeat(socket)
       }
 
-      /*
-       * Receive WebSocket messages.
-       */
       socket.onmessage = (event) => {
+        if (!isEffectActive) {
+          return
+        }
+
         try {
           const data = JSON.parse(event.data)
 
-          /*
-           * Heartbeat response.
-           */
           if (data.type === 'pong') {
-            console.log(
-              'Heartbeat pong received'
-            )
-
             return
           }
 
-          /*
-           * Normal chat message.
-           */
           if (data.type === 'message') {
-            setMessages(
-              (currentMessages) => [
-                ...currentMessages,
-                {
-                  id: data.id,
-                  senderId: data.senderId,
-                  text: data.text,
-                  timestamp: data.timestamp,
-                },
-              ]
-            )
+            setMessages((currentMessages) => [
+              ...currentMessages,
+              {
+                id: data.id,
+                senderId: data.senderId,
+                text: data.text,
+                timestamp: data.timestamp,
+              },
+            ])
           }
 
-          /*
-           * Server-side error.
-           */
-          if (data.type === 'error') {
-            console.error(
-              data.message
+          if (
+            data.type === 'error' &&
+            data.code === 'CHAT_EXPIRED'
+          ) {
+            shouldReconnectRef.current = false
+            stopHeartbeat()
+            setConnectionStatus('Chat expired')
+            setError(
+              'This chat expired after 15 minutes of inactivity.'
             )
           }
         } catch (error) {
@@ -210,115 +159,123 @@ function ChatRoom() {
         }
       }
 
-      /*
-       * WebSocket error.
-       */
-      socket.onerror = (error) => {
-        console.error(
-          'WebSocket error:',
-          error
-        )
+      socket.onerror = (event) => {
+        console.error('WebSocket error:', event)
       }
 
-      /*
-       * WebSocket closed.
-       */
-      socket.onclose = () => {
-        console.log(
-          'WebSocket disconnected'
-        )
-
+      socket.onclose = (event) => {
         stopHeartbeat()
 
-        /*
-         * Only schedule reconnect if the user
-         * is still on the chat page.
-         */
-        if (
-          shouldReconnectRef.current
-        ) {
-          setConnectionStatus(
-            'Reconnecting...'
-          )
-
-          scheduleReconnect(
-            connectWebSocket
-          )
+        if (!isEffectActive) {
+          return
         }
-      }
 
-      /*
-       * The initial connection attempt is now
-       * being handled by the WebSocket.
-       */
-      if (isInitialConnection) {
-        isInitialConnection = false
+        if (event.code === 4000) {
+          shouldReconnectRef.current = false
+          setConnectionStatus('Chat expired')
+          setError(
+            'This chat expired after 15 minutes of inactivity.'
+          )
+          setLoading(false)
+          return
+        }
+
+        if (shouldReconnectRef.current) {
+          scheduleReconnect(reconnectToChat)
+        }
       }
     }
 
-    /*
-     * First verify that the chat exists.
-     * After that, establish the WebSocket.
-     */
-    async function connectToChat() {
-      if (!code) {
-        setError(
-          'No chat code was provided.'
-        )
-
-        setLoading(false)
-
+    async function reconnectToChat() {
+      if (
+        !isEffectActive ||
+        !shouldReconnectRef.current ||
+        !code
+      ) {
         return
       }
 
       try {
         const response = await fetch(
-          `/api/chat/join?code=${encodeURIComponent(code)}`
+          '/api/chat/join?code=' + encodeURIComponent(code)
         )
+        const result = await response.json()
 
-        const result =
-          await response.json()
+        if (!isEffectActive || !shouldReconnectRef.current) {
+          return
+        }
 
-        if (!response.ok) {
+        if (response.status === 404) {
+          shouldReconnectRef.current = false
+          setConnectionStatus('Chat expired')
           setError(
             result.message ||
-              'Chat not found.'
+            'This chat expired after 15 minutes of inactivity.'
           )
-
           setLoading(false)
+          return
+        }
 
+        if (!response.ok) {
+          throw new Error(
+            result.message || 'Unable to reconnect to chat.'
+          )
+        }
+
+        connectWebSocket()
+      } catch (error) {
+        console.error('Unable to verify chat before reconnect:', error)
+        scheduleReconnect(reconnectToChat)
+      }
+    }
+
+    async function connectToChat() {
+      if (!code) {
+        setError('No chat code was provided.')
+        setLoading(false)
+        return
+      }
+
+      try {
+        const response = await fetch(
+          '/api/chat/join?code=' + encodeURIComponent(code)
+        )
+        const result = await response.json()
+
+        if (!isEffectActive) {
+          return
+        }
+
+        if (!response.ok) {
+          setError(result.message || 'Chat not found.')
+          setLoading(false)
           return
         }
 
         setChatExists(true)
-
         connectWebSocket()
       } catch (error) {
-        console.error(error)
+        if (!isEffectActive) {
+          return
+        }
 
+        console.error(error)
         setError(
           'Unable to connect to the chat. Please try again.'
         )
-
         setLoading(false)
       }
     }
 
     connectToChat()
 
-    /*
-     * Cleanup when leaving the chat page.
-     */
     return () => {
+      isEffectActive = false
       shouldReconnectRef.current = false
-
       stopHeartbeat()
 
       if (reconnectTimerRef.current) {
-        clearTimeout(
-          reconnectTimerRef.current
-        )
-
+        clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
 
@@ -330,58 +287,38 @@ function ChatRoom() {
     }
   }, [code])
 
-  /*
-   * Send a normal chat message.
-   */
   function handleSendMessage() {
-    const trimmedMessage =
-      message.trim()
-
-    if (!trimmedMessage) {
-      return
-    }
+    const trimmedMessage = message.trim()
 
     if (
+      !trimmedMessage ||
       !socketRef.current ||
-      socketRef.current.readyState !==
-        WebSocket.OPEN
+      socketRef.current.readyState !== WebSocket.OPEN
     ) {
       return
     }
 
-    socketRef.current.send(
-      JSON.stringify({
-        type: 'message',
-        senderId: clientId,
-        text: trimmedMessage,
-      })
-    )
+    socketRef.current.send(JSON.stringify({
+      type: 'message',
+      senderId: clientId,
+      text: trimmedMessage,
+    }))
 
     setMessage('')
   }
 
-  /*
-   * Send message when Enter is pressed.
-   */
   function handleKeyDown(event) {
     if (event.key === 'Enter') {
       handleSendMessage()
     }
   }
 
-  /*
-   * Initial loading screen.
-   */
   if (loading) {
     return (
       <main className="app">
         <section className="hero">
-          <div className="logo">
-            VAP CHAT
-          </div>
-
+          <div className="logo">VAP CHAT</div>
           <h1>Joining Chat...</h1>
-
           <p className="subtitle">
             Connecting to your temporary chat.
           </p>
@@ -390,28 +327,16 @@ function ChatRoom() {
     )
   }
 
-  /*
-   * Chat doesn't exist / initial connection failed.
-   */
   if (error || !chatExists) {
     return (
       <main className="app">
         <section className="hero">
-          <div className="logo">
-            VAP CHAT
-          </div>
-
+          <div className="logo">VAP CHAT</div>
           <h1>Chat Not Found</h1>
-
           <p className="subtitle">
-            {error ||
-              'This chat does not exist.'}
+            {error || 'This chat does not exist.'}
           </p>
-
-          <Link
-            to="/"
-            className="secondary-button"
-          >
+          <Link to="/" className="secondary-button">
             Back to Home
           </Link>
         </section>
@@ -419,26 +344,17 @@ function ChatRoom() {
     )
   }
 
-  /*
-   * Chat UI.
-   */
   return (
     <main className="app">
       <section className="chat-room">
         <div className="chat-header">
           <div>
-            <div className="logo">
-              VAP CHAT
-            </div>
-
+            <div className="logo">VAP CHAT</div>
             <span className="connection-status">
               ● {connectionStatus}
             </span>
           </div>
-
-          <span className="chat-code">
-            {code}
-          </span>
+          <span className="chat-code">{code}</span>
         </div>
 
         <div className="messages">
@@ -448,24 +364,18 @@ function ChatRoom() {
             </div>
           ) : (
             messages.map((item) => {
-              const isOwnMessage =
-                item.senderId === clientId
+              const isOwnMessage = item.senderId === clientId
 
               return (
                 <div
                   key={item.id}
-                  className={`message ${
-                    isOwnMessage
-                      ? 'sent'
-                      : 'received'
-                  }`}
+                  className={
+                    'message ' + (isOwnMessage ? 'sent' : 'received')
+                  }
                 >
                   <div>{item.text}</div>
-
                   <span className="message-time">
-                    {new Date(
-                      item.timestamp
-                    ).toLocaleTimeString(
+                    {new Date(item.timestamp).toLocaleTimeString(
                       [],
                       {
                         hour: '2-digit',
@@ -484,23 +394,17 @@ function ChatRoom() {
             type="text"
             placeholder="Type a message..."
             value={message}
-            onChange={(event) =>
-              setMessage(event.target.value)
-            }
+            onChange={(event) => setMessage(event.target.value)}
             onKeyDown={handleKeyDown}
             maxLength={2000}
-            disabled={
-              connectionStatus !==
-              'Connected'
-            }
+            disabled={connectionStatus !== 'Connected'}
           />
 
           <button
             className="send-button"
             onClick={handleSendMessage}
             disabled={
-              connectionStatus !==
-                'Connected' ||
+              connectionStatus !== 'Connected' ||
               !message.trim()
             }
           >
@@ -508,10 +412,7 @@ function ChatRoom() {
           </button>
         </div>
 
-        <Link
-          to="/"
-          className="leave-button"
-        >
+        <Link to="/" className="leave-button">
           Leave Chat
         </Link>
       </section>
