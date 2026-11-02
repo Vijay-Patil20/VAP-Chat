@@ -206,3 +206,31 @@ test('expiry helpers handle the exact boundary and invalid timestamps safely', (
     null
   )
 })
+
+test('the Durable Object alarm expires an inactive room and closes its sockets', async () => {
+  const fixture = createFixture()
+  const { lifecycle, sockets, storage, setNow } = fixture
+  const socket = {
+    readyState: 1,
+    sent: [],
+    closeCode: null,
+    send(payload) {
+      this.sent.push(JSON.parse(payload))
+    },
+    close(code) {
+      this.closeCode = code
+      this.readyState = 3
+    },
+  }
+
+  sockets.push(socket)
+  await lifecycle.initialize()
+  setNow(1_000_000 + CHAT_INACTIVITY_TIMEOUT_MS)
+
+  await lifecycle.alarm()
+
+  assert.equal(socket.closeCode, CHAT_EXPIRED_CLOSE_CODE)
+  assert.equal(socket.sent[0].code, 'CHAT_EXPIRED')
+  assert.equal(storage.values.size, 0)
+  assert.equal(storage.alarmTimestamp, null)
+})
