@@ -4,8 +4,10 @@ VAP Chat is a temporary, anonymous messaging application for simple conversation
 
 ## Current capabilities
 
-- Create a chat and receive a shareable random code.
-- Join an existing chat using its code.
+- Create a chat and receive a shareable random invite code.
+- Join an existing chat using its invite code.
+- Use 12-character invite codes formatted as `XXXX-XXXX-XXXX`, generated with cryptographic randomness and unbiased character selection.
+- Never reuse a room ID after its room expires; a small expiry tombstone is retained by the Durable Object.
 - Exchange messages in real time over WebSockets.
 - Enforce a strict two-participant maximum per room.
 - Limit each connection to five messages per rolling ten-second window.
@@ -13,7 +15,7 @@ VAP Chat is a temporary, anonymous messaging application for simple conversation
 - Join and WebSocket connection attempts each have a per-public-IP burst capacity of 20, replenishing one token every three seconds.
 - Reconnect automatically after a temporary connection loss.
 - Expire rooms after 15 minutes without chat activity.
-- Close connected participants and clear room storage when a room expires.
+- Close connected participants and clear active room data when a room expires.
 - Responsive interface for desktop and mobile.
 
 ## How temporary chats work
@@ -22,7 +24,7 @@ A room's 15-minute inactivity window starts when it is created. The timer is res
 
 WebSocket heartbeat pings do not count as activity. Simply leaving the chat open and reading messages does not keep it alive.
 
-Cloudflare Durable Object Alarms perform expiry on the server, including when no browser is connected. When a room expires, connected sockets are closed and the Durable Object storage is cleared. Subsequent attempts to join receive a not-found response.
+Cloudflare Durable Object Alarms perform expiry on the server, including when no browser is connected. When a room expires, connected sockets are closed and active room data is cleared. A small `expiredAt` tombstone remains so the same Durable Object ID can never be initialized as a new room. Subsequent attempts to join receive a not-found response.
 
 The current chat implementation broadcasts messages in real time but does not persist message history. Messages are therefore not available to users who join after they were sent or reconnect after missing them.
 
@@ -35,14 +37,15 @@ React + Vite frontend
         v
 Cloudflare Worker
         |
-        | one Durable Object per chat code
+        | one Durable Object per invite code
         v
 Chat Room Durable Object (SQLite storage)
         |
         +-- room creation and activity timestamps
+        +-- permanent expiry tombstone
         +-- 15-minute inactivity alarm
         +-- WebSocket connections and message broadcast
-        +-- expiry and storage cleanup
+        +-- active room data cleanup
 
 Cloudflare Worker
         |
@@ -77,6 +80,7 @@ The project uses the Cloudflare Vite plugin and Wrangler. Review the Cloudflare 
 ## Current limitations
 
 - Chat messages are not persisted or replayed after reconnect.
-- There is no participant authentication; possession of a valid chat code grants access.
+- There is no participant authentication; possession of a valid invite code grants access.
 - The 15-minute inactivity duration is currently a code constant and is not user-configurable.
+- Expiry tombstones are intentionally retained to prevent room-ID reuse; they are tiny but accumulate over time.
 - Requests from users sharing one public IP (for example, some mobile carrier or office networks) share that IP's API rate-limit buckets.

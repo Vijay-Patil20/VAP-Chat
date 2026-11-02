@@ -23,12 +23,15 @@ class MemoryStorage {
     this.values.set(key, value)
   }
 
+  async delete(key) {
+    this.values.delete(key)
+  }
+
   async setAlarm(timestamp) {
     this.alarmTimestamp = timestamp
   }
 
-  async deleteAll() {
-    this.values.clear()
+  async deleteAlarm() {
     this.alarmTimestamp = null
   }
 }
@@ -57,8 +60,7 @@ test('new chat stores creation and activity timestamps and schedules expiry', as
   const fixture = createFixture()
   const { lifecycle, storage } = fixture
 
-  await lifecycle.initialize()
-
+  assert.equal(await lifecycle.initialize(), true)
   assert.equal(
     await storage.get('lastActivityAt'),
     1_000_000
@@ -71,6 +73,15 @@ test('new chat stores creation and activity timestamps and schedules expiry', as
     storage.alarmTimestamp,
     1_000_000 + CHAT_INACTIVITY_TIMEOUT_MS
   )
+})
+
+test('an active room cannot be initialized a second time', async () => {
+  const fixture = createFixture()
+  const { lifecycle, storage } = fixture
+
+  assert.equal(await lifecycle.initialize(), true)
+  assert.equal(await lifecycle.initialize(), false)
+  assert.equal(storage.values.get('createdAt'), new Date(1_000_000).toISOString())
 })
 
 test('valid activity moves the expiry deadline forward', async () => {
@@ -125,8 +136,26 @@ test('a room expires at the inactivity deadline and closes connected sockets', a
   assert.equal(await lifecycle.isActive(), false)
   assert.equal(socket.closeCode, CHAT_EXPIRED_CLOSE_CODE)
   assert.equal(socket.sent[0].code, 'CHAT_EXPIRED')
-  assert.equal(storage.values.size, 0)
+  assert.equal(storage.values.get('expiredAt'), 1_000_000 + CHAT_INACTIVITY_TIMEOUT_MS)
+  assert.equal(storage.values.has('createdAt'), false)
+  assert.equal(storage.values.has('lastActivityAt'), false)
+  assert.equal(storage.values.size, 1)
   assert.equal(storage.alarmTimestamp, null)
+})
+
+test('an expired room can never be initialized again', async () => {
+  const fixture = createFixture()
+  const { lifecycle, storage, setNow } = fixture
+
+  await lifecycle.initialize()
+  setNow(1_000_000 + CHAT_INACTIVITY_TIMEOUT_MS)
+  assert.equal(await lifecycle.isActive(), false)
+
+  setNow(1_000_000 + CHAT_INACTIVITY_TIMEOUT_MS + 60_000)
+  assert.equal(await lifecycle.initialize(), false)
+  assert.equal(await lifecycle.isActive(), false)
+  assert.equal(storage.values.has('expiredAt'), true)
+  assert.equal(storage.values.has('createdAt'), false)
 })
 
 test('an early alarm reschedules itself instead of expiring the room', async () => {
@@ -231,6 +260,7 @@ test('the Durable Object alarm expires an inactive room and closes its sockets',
 
   assert.equal(socket.closeCode, CHAT_EXPIRED_CLOSE_CODE)
   assert.equal(socket.sent[0].code, 'CHAT_EXPIRED')
-  assert.equal(storage.values.size, 0)
+  assert.equal(storage.values.has('expiredAt'), true)
+  assert.equal(storage.values.size, 1)
   assert.equal(storage.alarmTimestamp, null)
 })

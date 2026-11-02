@@ -70,9 +70,19 @@ export class ChatLifecycle {
   }
 
   async initialize() {
+    // Keep this tombstone after cleanup. A Durable Object ID must never
+    // become a fresh room again after its original room expires.
+    const expiredAt = await this.storage.get('expiredAt')
+
+    if (expiredAt != null) {
+      return false
+    }
+
     const createdAt = await this.storage.get('createdAt')
 
-    if (createdAt && await this.isActive()) {
+    if (createdAt) {
+      // This also expires stale legacy rooms and writes the tombstone.
+      await this.isActive()
       return false
     }
 
@@ -88,15 +98,29 @@ export class ChatLifecycle {
   }
 
   async touchActivity() {
+    const expiredAt = await this.storage.get('expiredAt')
+
+    if (expiredAt != null) {
+      return false
+    }
+
     const now = this.now()
 
     await this.storage.put('lastActivityAt', now)
     await this.storage.setAlarm(
       now + CHAT_INACTIVITY_TIMEOUT_MS
     )
+
+    return true
   }
 
   async isActive({ touch = false } = {}) {
+    const expiredAt = await this.storage.get('expiredAt')
+
+    if (expiredAt != null) {
+      return false
+    }
+
     const createdAt = await this.storage.get('createdAt')
 
     if (!createdAt) {
@@ -138,6 +162,12 @@ export class ChatLifecycle {
   }
 
   async alarm() {
+    const expiredAt = await this.storage.get('expiredAt')
+
+    if (expiredAt != null) {
+      return
+    }
+
     const createdAt = await this.storage.get('createdAt')
 
     if (!createdAt) {
@@ -173,6 +203,14 @@ export class ChatLifecycle {
   }
 
   async expire() {
+    // Persist the tombstone before closing sockets or deleting room data.
+    // If cleanup is interrupted, the room still cannot be reinitialized.
+    const expiredAt = await this.storage.get('expiredAt')
+
+    if (expiredAt == null) {
+      await this.storage.put('expiredAt', this.now())
+    }
+
     for (const socket of this.getWebSockets()) {
       if (socket.readyState !== 1) {
         continue
@@ -198,6 +236,8 @@ export class ChatLifecycle {
       }
     }
 
-    await this.storage.deleteAll()
+    await this.storage.delete('createdAt')
+    await this.storage.delete('lastActivityAt')
+    await this.storage.deleteAlarm()
   }
 }

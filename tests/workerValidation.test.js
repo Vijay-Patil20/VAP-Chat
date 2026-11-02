@@ -3,26 +3,32 @@ import test from 'node:test'
 
 import { normalizeChatCode } from '../src/utils/chatCode.js'
 
-test('normalizes valid chat codes without changing their identity', () => {
-  assert.equal(normalizeChatCode('abc-def'), 'ABC-DEF')
-  assert.equal(normalizeChatCode(' ABC-DEF '), 'ABC-DEF')
+test('normalizes valid 12-character chat codes without changing identity', () => {
+  assert.equal(
+    normalizeChatCode('abcd-efgh-2345'),
+    'ABCD-EFGH-2345'
+  )
+  assert.equal(
+    normalizeChatCode(' ABCD-EFGH-2345 '),
+    'ABCD-EFGH-2345'
+  )
 })
 
-test('rejects malformed or non-string chat codes', () => {
+test('rejects old short codes, malformed codes, and non-string values', () => {
   for (const value of [
     null,
     undefined,
     123456,
     '',
-    'ABCDEF',
-    'ABC_DEF',
-    'ABC-DE',
-    'ABCD-EF',
-    'ABC-DEF1',
-    'ABC-DEF-',
-    'ABC-0EF',
-    'ABC-IOU',
-    'ABC-DEF<script>',
+    'ABC-DEF',
+    'ABCDEFGHIJKL',
+    'ABCD_EFGH_2345',
+    'ABCD-EFGH-234',
+    'ABCDE-FGH-2345',
+    'ABCD-EFGH-23456',
+    'ABCD-EFGH-0I45',
+    'ABCD-EFGH-IOU5',
+    'ABCD-EFGH-2345<script>',
   ]) {
     assert.equal(normalizeChatCode(value), null, String(value))
   }

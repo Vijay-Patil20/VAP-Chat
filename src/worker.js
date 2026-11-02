@@ -2,7 +2,10 @@
 
 import { DurableObject } from 'cloudflare:workers'
 import { ChatLifecycle } from './utils/chatLifecycle.js'
-import { normalizeChatCode } from './utils/chatCode.js'
+import {
+  generateChatCode,
+  normalizeChatCode,
+} from './utils/chatCode.js'
 import { RateLimiter } from './rateLimiter.js'
 import { isChatFull } from './utils/participantLimit.js'
 import {
@@ -12,24 +15,11 @@ import {
 
 export { RateLimiter }
 
-const CHAT_CODE_CHARACTERS =
-  'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-
-function generateChatCode() {
-  const randomValues = new Uint32Array(6)
-
+function createChatCode() {
+  const randomValues = new Uint32Array(32)
   crypto.getRandomValues(randomValues)
 
-  let code = ''
-
-  for (const value of randomValues) {
-    code +=
-      CHAT_CODE_CHARACTERS[
-        value % CHAT_CODE_CHARACTERS.length
-      ]
-  }
-
-  return code.slice(0, 3) + '-' + code.slice(3)
+  return generateChatCode(randomValues)
 }
 
 async function checkRateLimit(request, env, scope) {
@@ -91,11 +81,19 @@ export class ChatRoom extends DurableObject {
     const lifecycle = this.createLifecycle()
 
     if (url.pathname === '/initialize') {
-      await lifecycle.initialize()
+      const initialized = await lifecycle.initialize()
 
-      return Response.json({
-        status: 'created',
-      })
+      if (!initialized) {
+        return Response.json(
+          { status: 'conflict', message: 'This chat code is unavailable.' },
+          { status: 409 }
+        )
+      }
+
+      return Response.json(
+        { status: 'created' },
+        { status: 201 }
+      )
     }
 
     if (url.pathname === '/status') {
@@ -312,20 +310,48 @@ export default {
         return rateLimitResponse
       }
 
-      const code = generateChatCode()
-      const chatRoomId = env.CHAT_ROOM.idFromName(code)
-      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
+      // Retry collisions and permanently retired room IDs. Never return a
+      // code unless its Durable Object confirms a newly initialized room.
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const code = createChatCode()
 
-      await chatRoom.fetch(
-        new Request('https://chat-room/initialize', {
-          method: 'POST',
-        })
+        if (!code) {
+          continue
+        }
+
+        const chatRoomId = env.CHAT_ROOM.idFromName(code)
+        const chatRoom = env.CHAT_ROOM.get(chatRoomId)
+        const initializeResponse = await chatRoom.fetch(
+          new Request('https://chat-room/initialize', {
+            method: 'POST',
+          })
+        )
+
+        if (initializeResponse.status === 201) {
+          return Response.json({
+            code,
+            status: 'created',
+          })
+        }
+
+        if (initializeResponse.status !== 409) {
+          return Response.json(
+            {
+              status: 'error',
+              message: 'Unable to create a chat right now. Please try again.',
+            },
+            { status: 503 }
+          )
+        }
+      }
+
+      return Response.json(
+        {
+          status: 'error',
+          message: 'Unable to allocate a unique chat code. Please try again.',
+        },
+        { status: 503 }
       )
-
-      return Response.json({
-        code,
-        status: 'created',
-      })
     }
 
     if (url.pathname === '/api/chat/join') {
@@ -350,7 +376,7 @@ export default {
         return Response.json(
           {
             status: 'error',
-            message: 'A valid chat code in XXX-XXX format is required.',
+            message: 'A valid chat code in XXXX-XXXX-XXXX format is required.',
           },
           { status: 400 }
         )
@@ -414,7 +440,7 @@ export default {
         return Response.json(
           {
             status: 'error',
-            message: 'A valid chat code in XXX-XXX format is required.',
+            message: 'A valid chat code in XXXX-XXXX-XXXX format is required.',
           },
           { status: 400 }
         )
