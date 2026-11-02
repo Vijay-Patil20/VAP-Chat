@@ -2,23 +2,10 @@
 
 import { DurableObject } from 'cloudflare:workers'
 import { ChatLifecycle } from './utils/chatLifecycle.js'
+import { normalizeChatCode } from './utils/chatCode.js'
 
 const CHAT_CODE_CHARACTERS =
   'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-
-const CHAT_CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{3}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{3}$/
-
-export function normalizeChatCode(value) {
-  if (typeof value !== 'string') {
-    return null
-  }
-
-  const normalized = value.trim().toUpperCase()
-
-  return CHAT_CODE_PATTERN.test(normalized)
-    ? normalized
-    : null
-}
 
 function generateChatCode() {
   const randomValues = new Uint32Array(6)
