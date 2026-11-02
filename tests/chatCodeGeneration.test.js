@@ -28,6 +28,7 @@ test('uses the complete uint32 range without modulo bias', () => {
     7,
     8,
     9,
+    10,
   ]
 
   assert.equal(generateChatCode(values), '9ABC-DEFG-HJKL')

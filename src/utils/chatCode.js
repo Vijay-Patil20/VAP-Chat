@@ -20,8 +20,8 @@ export function generateChatCode(randomValues) {
     return null
   }
 
-  // Reject the incomplete tail of the uint32 range so every alphabet
-  // character has exactly the same probability.
+  // The alphabet has 32 symbols (2^5), so uint32 modulo maps evenly
+  // across the alphabet without discarding any valid random values.
   const range = 0x100000000
   const limit = Math.floor(range / CHAT_CODE_CHARACTERS.length) *
     CHAT_CODE_CHARACTERS.length
