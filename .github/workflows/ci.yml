@@ -8,6 +8,7 @@ on:
     branches:
       - main
       - 'feature/**'
+      - 'hardening/**'
 
 permissions:
   contents: read
@@ -33,7 +34,7 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
-      - name: Run lifecycle tests
+      - name: Run tests
         run: npm test
 
       - name: Build production assets
