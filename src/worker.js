@@ -44,9 +44,7 @@ export class ChatRoom extends DurableObject {
     }
 
     if (url.pathname === '/status') {
-      const active = await lifecycle.isActive({
-        touch: true,
-      })
+      const active = await lifecycle.isActive()
 
       if (!active) {
         return Response.json(
@@ -75,9 +73,7 @@ export class ChatRoom extends DurableObject {
         )
       }
 
-      const active = await lifecycle.isActive({
-        touch: true,
-      })
+      const active = await lifecycle.isActive()
 
       if (!active) {
         return Response.json(
@@ -93,6 +89,7 @@ export class ChatRoom extends DurableObject {
       const [client, server] = Object.values(webSocketPair)
 
       this.ctx.acceptWebSocket(server)
+      await lifecycle.touchActivity()
 
       return new Response(null, {
         status: 101,
