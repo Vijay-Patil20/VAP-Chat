@@ -312,7 +312,8 @@ export default {
 
 
     return new Response(
-      'VAP Chat backend is working.'
+      'Not Found',
+      { status: 404 }
     )
   },
 }
