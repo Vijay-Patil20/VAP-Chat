@@ -4,14 +4,16 @@ import { DurableObject } from 'cloudflare:workers'
 import { ChatLifecycle } from './utils/chatLifecycle.js'
 import { normalizeChatCode } from './utils/chatCode.js'
 import { RateLimiter } from './rateLimiter.js'
+import { isChatFull } from './utils/participantLimit.js'
+import {
+  getRecentMessageTimestamps,
+  isMessageRateLimited,
+} from './utils/messageRateLimit.js'
 
 export { RateLimiter }
 
 const CHAT_CODE_CHARACTERS =
   'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const MAX_CHAT_PARTICIPANTS = 2
-const MAX_MESSAGES_PER_WINDOW = 5
-const MESSAGE_WINDOW_MS = 10000
 
 function generateChatCode() {
   const randomValues = new Uint32Array(6)
@@ -148,7 +150,7 @@ export class ChatRoom extends DurableObject {
         .filter((socket) => socket.readyState === WebSocket.OPEN)
         .length
 
-      if (activeConnections >= MAX_CHAT_PARTICIPANTS) {
+      if (isChatFull(activeConnections)) {
         return Response.json(
           {
             status: 'full',
@@ -234,17 +236,12 @@ export class ChatRoom extends DurableObject {
 
     const now = Date.now()
     const attachment = ws.deserializeAttachment() || {}
-    const recentMessages = Array.isArray(
-      attachment.messageTimestamps
+    const recentMessages = getRecentMessageTimestamps(
+      attachment.messageTimestamps,
+      now
     )
-      ? attachment.messageTimestamps.filter(
-          (timestamp) =>
-            Number.isFinite(timestamp) &&
-            timestamp > now - MESSAGE_WINDOW_MS
-        )
-      : []
 
-    if (recentMessages.length >= MAX_MESSAGES_PER_WINDOW) {
+    if (isMessageRateLimited(recentMessages)) {
       ws.send(JSON.stringify({
         type: 'error',
         code: 'RATE_LIMITED',
@@ -378,7 +375,7 @@ export default {
       const roomStatus = await response.json()
 
       if (
-        roomStatus.activeConnections >= MAX_CHAT_PARTICIPANTS
+        roomStatus.isChatFull(activeConnections)
       ) {
         return Response.json(
           {
@@ -451,7 +448,7 @@ export default {
       const roomStatus = await statusResponse.json()
 
       if (
-        roomStatus.activeConnections >= MAX_CHAT_PARTICIPANTS
+        roomStatus.isChatFull(activeConnections)
       ) {
         return Response.json(
           {
