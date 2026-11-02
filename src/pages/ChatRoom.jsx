@@ -21,6 +21,20 @@ function ChatRoom() {
   const [message, setMessage] = useState('')
 
   useEffect(() => {
+    // React StrictMode runs effect setup/cleanup twice in development.
+    // Reset the shared reconnect flag for each active effect instance.
+    shouldReconnectRef.current = true
+    reconnectAttemptsRef.current = 0
+
+    let isEffectActive = true
+
+    setChatExists(false)
+    setLoading(true)
+    setError('')
+    setConnectionStatus('Connecting...')
+    setMessages([])
+    setMessage('')
+
     function stopHeartbeat() {
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current)
@@ -40,6 +54,7 @@ function ChatRoom() {
 
     function scheduleReconnect(reconnect) {
       if (
+        !isEffectActive ||
         !shouldReconnectRef.current ||
         reconnectTimerRef.current
       ) {
@@ -62,7 +77,11 @@ function ChatRoom() {
     }
 
     function connectWebSocket() {
-      if (!shouldReconnectRef.current || !code) {
+      if (
+        !isEffectActive ||
+        !shouldReconnectRef.current ||
+        !code
+      ) {
         return
       }
 
@@ -144,6 +163,10 @@ function ChatRoom() {
       socket.onclose = (event) => {
         stopHeartbeat()
 
+        if (!isEffectActive) {
+          return
+        }
+
         if (event.code === 4000) {
           shouldReconnectRef.current = false
           setConnectionStatus('Chat expired')
@@ -161,7 +184,11 @@ function ChatRoom() {
     }
 
     async function reconnectToChat() {
-      if (!shouldReconnectRef.current || !code) {
+      if (
+        !isEffectActive ||
+        !shouldReconnectRef.current ||
+        !code
+      ) {
         return
       }
 
@@ -170,6 +197,10 @@ function ChatRoom() {
           '/api/chat/join?code=' + encodeURIComponent(code)
         )
         const result = await response.json()
+
+        if (!isEffectActive || !shouldReconnectRef.current) {
+          return
+        }
 
         if (response.status === 404) {
           shouldReconnectRef.current = false
@@ -208,6 +239,10 @@ function ChatRoom() {
         )
         const result = await response.json()
 
+        if (!isEffectActive) {
+          return
+        }
+
         if (!response.ok) {
           setError(result.message || 'Chat not found.')
           setLoading(false)
@@ -217,6 +252,10 @@ function ChatRoom() {
         setChatExists(true)
         connectWebSocket()
       } catch (error) {
+        if (!isEffectActive) {
+          return
+        }
+
         console.error(error)
         setError(
           'Unable to connect to the chat. Please try again.'
@@ -228,6 +267,7 @@ function ChatRoom() {
     connectToChat()
 
     return () => {
+      isEffectActive = false
       shouldReconnectRef.current = false
       stopHeartbeat()
 
