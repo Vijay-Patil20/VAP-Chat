@@ -28,12 +28,6 @@ function ChatRoom() {
 
     let isEffectActive = true
 
-    setChatExists(false)
-    setLoading(true)
-    setError('')
-    setConnectionStatus('Connecting...')
-    setMessages([])
-    setMessage('')
 
     function stopHeartbeat() {
       if (heartbeatRef.current) {
