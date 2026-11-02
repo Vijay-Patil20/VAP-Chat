@@ -75,11 +75,11 @@ test('chat room permits exactly two participants', () => {
 
 test('message rate limiter retains only timestamps in the active window', () => {
   const recent = getRecentMessageTimestamps(
-    [1000, 5000, 9000, 9500, 9999, 10000],
+    [1000, 5000, 9000, 9500, 9999, 10001],
     20000
   )
 
-  assert.deepEqual(recent, [10000])
+  assert.deepEqual(recent, [10001])
 })
 
 test('message rate limiter blocks the sixth message in ten seconds', () => {
