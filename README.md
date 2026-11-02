@@ -9,7 +9,9 @@ VAP Chat is a temporary, anonymous messaging application for simple conversation
 - Exchange messages in real time over WebSockets.
 - Enforce a strict two-participant maximum per room.
 - Limit each connection to five messages per rolling ten-second window.
-- Apply per-IP token-bucket limits to chat creation, joining, and WebSocket connection attempts.
+- Allow at most three chat creations per minute per public IP (burst of three).
+- Allow at most 20 join attempts and 20 WebSocket connection attempts per minute per public IP (burst of 20 for each route).
+- Limit each connection to five messages per rolling ten-second window.
 - Reconnect automatically after a temporary connection loss.
 - Expire rooms after 15 minutes without chat activity.
 - Close connected participants and clear room storage when a room expires.
@@ -78,5 +80,4 @@ The project uses the Cloudflare Vite plugin and Wrangler. Review the Cloudflare 
 - Chat messages are not persisted or replayed after reconnect.
 - There is no participant authentication; possession of a valid chat code grants access.
 - The 15-minute inactivity duration is currently a code constant and is not user-configurable.
-- There is no participant authentication; possession of a valid chat code grants access.
-- Requests from users sharing one public IP (for example, some mobile carrier or office networks) share that IP's API rate-limit bucket.
+- Requests from users sharing one public IP (for example, some mobile carrier or office networks) share that IP's API rate-limit buckets.
