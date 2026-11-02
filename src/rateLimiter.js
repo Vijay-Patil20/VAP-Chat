@@ -50,6 +50,13 @@ export class RateLimiter extends DurableObject {
       )
     }
 
+    if (!body || typeof body !== 'object') {
+      return Response.json(
+        { error: 'Invalid rate-limit scope.' },
+        { status: 400 }
+      )
+    }
+
     const config = RATE_LIMITS[body.scope]
 
     if (!config) {
