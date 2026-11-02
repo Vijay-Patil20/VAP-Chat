@@ -10,6 +10,7 @@ function ChatRoom() {
   const reconnectTimerRef = useRef(null)
   const reconnectAttemptsRef = useRef(0)
   const shouldReconnectRef = useRef(true)
+  const pendingMessageRef = useRef(null)
 
   const [clientId] = useState(() => crypto.randomUUID())
   const [chatExists, setChatExists] = useState(false)
@@ -19,6 +20,8 @@ function ChatRoom() {
     useState('Connecting...')
   const [messages, setMessages] = useState([])
   const [message, setMessage] = useState('')
+  const [notice, setNotice] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => {
     // React StrictMode runs effect setup/cleanup twice in development.
@@ -129,6 +132,17 @@ function ChatRoom() {
           }
 
           if (data.type === 'message') {
+            if (
+              data.senderId === clientId &&
+              data.text === pendingMessageRef.current
+            ) {
+              pendingMessageRef.current = null
+              setSending(false)
+              setMessage((currentMessage) =>
+                currentMessage === data.text ? '' : currentMessage
+              )
+            }
+
             setMessages((currentMessages) => [
               ...currentMessages,
               {
@@ -138,6 +152,16 @@ function ChatRoom() {
                 timestamp: data.timestamp,
               },
             ])
+          }
+
+          if (
+            data.type === 'error' &&
+            data.code === 'RATE_LIMITED'
+          ) {
+            pendingMessageRef.current = null
+            setSending(false)
+            setNotice(data.message)
+            return
           }
 
           if (
@@ -212,6 +236,16 @@ function ChatRoom() {
             result.message ||
             'This chat expired after 15 minutes of inactivity.'
           )
+          setLoading(false)
+          return
+        }
+
+        if (response.status === 409 || response.status === 429) {
+          shouldReconnectRef.current = false
+          setConnectionStatus(
+            response.status === 409 ? 'Chat full' : 'Rate limited'
+          )
+          setError(result.message || 'Unable to reconnect to chat.')
           setLoading(false)
           return
         }
@@ -292,19 +326,21 @@ function ChatRoom() {
 
     if (
       !trimmedMessage ||
+      sending ||
       !socketRef.current ||
       socketRef.current.readyState !== WebSocket.OPEN
     ) {
       return
     }
 
+    pendingMessageRef.current = trimmedMessage
+    setNotice('')
+    setSending(true)
     socketRef.current.send(JSON.stringify({
       type: 'message',
       senderId: clientId,
       text: trimmedMessage,
     }))
-
-    setMessage('')
   }
 
   function handleKeyDown(event) {
@@ -389,12 +425,19 @@ function ChatRoom() {
           )}
         </div>
 
+        {notice && (
+          <p className="error-message">{notice}</p>
+        )}
+
         <div className="message-input">
           <input
             type="text"
             placeholder="Type a message..."
             value={message}
-            onChange={(event) => setMessage(event.target.value)}
+            onChange={(event) => {
+              setMessage(event.target.value)
+              setNotice('')
+            }}
             onKeyDown={handleKeyDown}
             maxLength={2000}
             disabled={connectionStatus !== 'Connected'}
@@ -405,6 +448,7 @@ function ChatRoom() {
             onClick={handleSendMessage}
             disabled={
               connectionStatus !== 'Connected' ||
+              sending ||
               !message.trim()
             }
           >
