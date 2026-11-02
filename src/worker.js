@@ -1,6 +1,7 @@
 /* global WebSocketPair */
 
 import { DurableObject } from 'cloudflare:workers'
+import { ChatLifecycle } from './utils/chatLifecycle.js'
 
 const CHAT_CODE_CHARACTERS =
   'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -19,47 +20,44 @@ function generateChatCode() {
       ]
   }
 
-  return `${code.slice(0, 3)}-${code.slice(3)}`
+  return code.slice(0, 3) + '-' + code.slice(3)
 }
 
 export class ChatRoom extends DurableObject {
+  createLifecycle() {
+    return new ChatLifecycle(
+      this.ctx.storage,
+      () => this.ctx.getWebSockets()
+    )
+  }
+
   async fetch(request) {
     const url = new URL(request.url)
+    const lifecycle = this.createLifecycle()
 
-    /*
-     * Create / initialize chat
-     */
     if (url.pathname === '/initialize') {
-      const existingChat =
-        await this.ctx.storage.get('createdAt')
-
-      if (!existingChat) {
-        await this.ctx.storage.put(
-          'createdAt',
-          new Date().toISOString()
-        )
-      }
+      await lifecycle.initialize()
 
       return Response.json({
         status: 'created',
       })
     }
 
-    /*
-     * Check whether chat exists
-     */
     if (url.pathname === '/status') {
-      const createdAt =
-        await this.ctx.storage.get('createdAt')
+      const active = await lifecycle.isActive({
+        touch: true,
+      })
 
-      if (!createdAt) {
+      if (!active) {
         return Response.json(
-          {
-            status: 'not_found',
-          },
+          { status: 'not_found' },
           { status: 404 }
         )
       }
+
+      const createdAt = await this.ctx.storage.get(
+        'createdAt'
+      )
 
       return Response.json({
         status: 'found',
@@ -67,13 +65,9 @@ export class ChatRoom extends DurableObject {
       })
     }
 
-    /*
-     * WebSocket connection
-     */
     if (url.pathname === '/websocket') {
       if (
-        request.headers.get('Upgrade') !==
-        'websocket'
+        request.headers.get('Upgrade') !== 'websocket'
       ) {
         return new Response(
           'Expected WebSocket',
@@ -81,11 +75,22 @@ export class ChatRoom extends DurableObject {
         )
       }
 
-      const webSocketPair =
-        new WebSocketPair()
+      const active = await lifecycle.isActive({
+        touch: true,
+      })
 
-      const [client, server] =
-        Object.values(webSocketPair)
+      if (!active) {
+        return Response.json(
+          {
+            status: 'not_found',
+            message: 'Chat not found or expired.',
+          },
+          { status: 404 }
+        )
+      }
+
+      const webSocketPair = new WebSocketPair()
+      const [client, server] = Object.values(webSocketPair)
 
       this.ctx.acceptWebSocket(server)
 
@@ -100,9 +105,10 @@ export class ChatRoom extends DurableObject {
     )
   }
 
-  /*
-   * Receive message from a connected client
-   */
+  async alarm() {
+    await this.createLifecycle().alarm()
+  }
+
   async webSocketMessage(ws, message) {
     let data
 
@@ -114,80 +120,56 @@ export class ChatRoom extends DurableObject {
               new TextDecoder().decode(message)
             )
     } catch {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format.',
-        })
-      )
-
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format.',
+      }))
       return
     }
 
-    /*
-     * Heartbeat
-     *
-     * The browser will periodically send
-     * a "ping" message.
-     *
-     * The server responds with "pong"
-     * to confirm that the connection is alive.
-     */
+    // Heartbeats keep the connection healthy but do not count as chat activity.
     if (data.type === 'ping') {
-      ws.send(
-        JSON.stringify({
-          type: 'pong',
-          timestamp: new Date().toISOString(),
-        })
-      )
-
+      ws.send(JSON.stringify({
+        type: 'pong',
+        timestamp: new Date().toISOString(),
+      }))
       return
     }
 
-    /*
-     * Validate normal chat message
-     */
     if (
       data.type !== 'message' ||
       typeof data.text !== 'string'
     ) {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: 'Invalid chat message.',
-        })
-      )
-
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid chat message.',
+      }))
       return
     }
 
     const text = data.text.trim()
 
-    /*
-     * Ignore empty messages
-     */
     if (!text) {
       return
     }
 
-    /*
-     * Limit message length
-     */
     if (text.length > 2000) {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message:
-            'Message cannot exceed 2000 characters.',
-        })
-      )
-
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Message cannot exceed 2000 characters.',
+      }))
       return
     }
 
-    /*
-     * Create chat message
-     */
+    // A valid message resets the inactivity timer.
+    const active = await this.createLifecycle().isActive({
+      touch: true,
+    })
+
+    if (!active) {
+      return
+    }
+
     const chatMessage = JSON.stringify({
       type: 'message',
       id: crypto.randomUUID(),
@@ -196,10 +178,6 @@ export class ChatRoom extends DurableObject {
       timestamp: new Date().toISOString(),
     })
 
-    /*
-     * Send message to everyone
-     * in this chat room
-     */
     for (const client of this.ctx.getWebSockets()) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(chatMessage)
@@ -207,27 +185,14 @@ export class ChatRoom extends DurableObject {
     }
   }
 
-  /*
-   * Handle WebSocket close
-   */
-  async webSocketClose(
-    ws,
-    code,
-    reason
-  ) {
+  async webSocketClose(ws, code, reason) {
     console.log(
-      `WebSocket closed: ${code} ${reason}`
+      'WebSocket closed: ' + code + ' ' + reason
     )
   }
 
-  /*
-   * Handle WebSocket error
-   */
   async webSocketError(ws, error) {
-    console.error(
-      'WebSocket error:',
-      error
-    )
+    console.error('WebSocket error:', error)
   }
 }
 
@@ -235,9 +200,6 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url)
 
-    /*
-     * Health check
-     */
     if (url.pathname === '/api/health') {
       return Response.json({
         status: 'ok',
@@ -245,25 +207,15 @@ export default {
       })
     }
 
-    /*
-     * Create chat
-     */
     if (url.pathname === '/api/chat/create') {
       const code = generateChatCode()
-
-      const chatRoomId =
-        env.CHAT_ROOM.idFromName(code)
-
-      const chatRoom =
-        env.CHAT_ROOM.get(chatRoomId)
+      const chatRoomId = env.CHAT_ROOM.idFromName(code)
+      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
 
       await chatRoom.fetch(
-        new Request(
-          'https://chat-room/initialize',
-          {
-            method: 'POST',
-          }
-        )
+        new Request('https://chat-room/initialize', {
+          method: 'POST',
+        })
       )
 
       return Response.json({
@@ -272,9 +224,6 @@ export default {
       })
     }
 
-    /*
-     * Join chat
-     */
     if (url.pathname === '/api/chat/join') {
       const code = url.searchParams
         .get('code')
@@ -285,31 +234,23 @@ export default {
         return Response.json(
           {
             status: 'error',
-            message:
-              'Chat code is required.',
+            message: 'Chat code is required.',
           },
           { status: 400 }
         )
       }
 
-      const chatRoomId =
-        env.CHAT_ROOM.idFromName(code)
-
-      const chatRoom =
-        env.CHAT_ROOM.get(chatRoomId)
-
-      const response =
-        await chatRoom.fetch(
-          new Request(
-            'https://chat-room/status'
-          )
-        )
+      const chatRoomId = env.CHAT_ROOM.idFromName(code)
+      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
+      const response = await chatRoom.fetch(
+        new Request('https://chat-room/status')
+      )
 
       if (!response.ok) {
         return Response.json(
           {
             status: 'not_found',
-            message: 'Chat not found.',
+            message: 'Chat not found or expired.',
           },
           { status: 404 }
         )
@@ -321,9 +262,6 @@ export default {
       })
     }
 
-    /*
-     * WebSocket chat connection
-     */
     if (url.pathname === '/api/chat/ws') {
       const code = url.searchParams
         .get('code')
@@ -338,8 +276,7 @@ export default {
       }
 
       if (
-        request.headers.get('Upgrade') !==
-        'websocket'
+        request.headers.get('Upgrade') !== 'websocket'
       ) {
         return new Response(
           'Expected WebSocket',
@@ -347,56 +284,32 @@ export default {
         )
       }
 
-      const chatRoomId =
-        env.CHAT_ROOM.idFromName(code)
-
-      const chatRoom =
-        env.CHAT_ROOM.get(chatRoomId)
-
-      /*
-       * Make sure the chat actually exists
-       * before opening a WebSocket connection.
-       */
-      const statusResponse =
-        await chatRoom.fetch(
-          new Request(
-            'https://chat-room/status'
-          )
-        )
+      const chatRoomId = env.CHAT_ROOM.idFromName(code)
+      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
+      const statusResponse = await chatRoom.fetch(
+        new Request('https://chat-room/status')
+      )
 
       if (!statusResponse.ok) {
         return Response.json(
           {
             status: 'not_found',
-            message: 'Chat not found.',
+            message: 'Chat not found or expired.',
           },
           { status: 404 }
         )
       }
 
-      /*
-       * Forward the WebSocket request
-       * to the Durable Object.
-       */
       return chatRoom.fetch(
-        new Request(
-          'https://chat-room/websocket',
-          request
-        )
+        new Request('https://chat-room/websocket', request)
       )
     }
 
-    /*
-     * Backend test endpoint
-     */
     if (url.pathname === '/api/chat/test') {
-      const chatRoomId =
-        env.CHAT_ROOM.idFromName(
-          'TEST-ROOM'
-        )
-
-      const chatRoom =
-        env.CHAT_ROOM.get(chatRoomId)
+      const chatRoomId = env.CHAT_ROOM.idFromName(
+        'TEST-ROOM'
+      )
+      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
 
       return chatRoom.fetch(request)
     }
