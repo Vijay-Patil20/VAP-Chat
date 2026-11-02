@@ -57,14 +57,16 @@ function JoinChat() {
         <div className="chat-code-input">
           <input
             type="text"
-            placeholder="Enter chat code"
+            placeholder="XXXX-XXXX-XXXX"
             value={code}
             onChange={(event) => {
               setCode(event.target.value)
               setError('')
             }}
-            maxLength={7}
+            maxLength={14}
             autoComplete="off"
+            autoCapitalize="characters"
+            spellCheck={false}
           />
         </div>
 

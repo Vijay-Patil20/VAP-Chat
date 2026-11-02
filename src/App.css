@@ -205,14 +205,16 @@
 
 .generated-code {
   margin: 30px auto;
-  padding: 20px 28px;
+  padding: 20px 24px;
   width: fit-content;
+  max-width: 100%;
   border: 1px solid #d8d8d8;
   border-radius: 14px;
-  font-size: 32px;
+  font-size: clamp(20px, 5vw, 28px);
   font-weight: 700;
-  letter-spacing: 6px;
+  letter-spacing: 4px;
   background: #fafafa;
+  overflow-wrap: anywhere;
 }
 
 .error-message {
@@ -221,6 +223,7 @@
   color: #c62828;
   font-size: 14px;
 }
+
 .empty-chat {
   flex: 1;
   display: flex;
@@ -229,6 +232,13 @@
   color: #999;
   font-size: 14px;
   text-align: center;
+}
+
+.message-time {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  opacity: 0.55;
 }
 
 @media (max-width: 600px) {
@@ -260,7 +270,8 @@
   }
 
   .chat-code {
-    font-size: 12px;
+    font-size: 11px;
+    letter-spacing: 1px;
   }
 
   .message {
@@ -274,10 +285,4 @@
   .send-button {
     padding: 0 16px;
   }
-}
-.message-time {
-  display: block;
-  margin-top: 5px;
-  font-size: 10px;
-  opacity: 0.55;
 }
