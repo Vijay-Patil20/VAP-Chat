@@ -57,15 +57,17 @@ export class RateLimiter extends DurableObject {
       )
     }
 
-    const config = RATE_LIMITS[body.scope]
-
-    if (!config) {
+    if (
+      typeof body.scope !== 'string' ||
+      !Object.hasOwn(RATE_LIMITS, body.scope)
+    ) {
       return Response.json(
         { error: 'Invalid rate-limit scope.' },
         { status: 400 }
       )
     }
 
+    const config = RATE_LIMITS[body.scope]
     const previous = this.ctx.storage.sql.exec(
       'SELECT tokens, updated_at FROM rate_limit_buckets WHERE scope = ?',
       body.scope
