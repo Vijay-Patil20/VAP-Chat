@@ -14,12 +14,20 @@
       {
         "name": "CHAT_ROOM",
         "class_name": "ChatRoom"
+      },
+      {
+        "name": "RATE_LIMITER",
+        "class_name": "RateLimiter"
       }
     ]
   },
 
   "exports": {
     "ChatRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "RateLimiter": {
       "type": "durable-object",
       "storage": "sqlite"
     }
@@ -31,6 +39,10 @@
         {
           "name": "CHAT_ROOM",
           "class_name": "ChatRoom"
+        },
+        {
+          "name": "RATE_LIMITER",
+          "class_name": "RateLimiter"
         }
       ]
     }
