@@ -16,6 +16,7 @@ function ChatRoom() {
   const [chatExists, setChatExists] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [failureTitle, setFailureTitle] = useState('Chat Not Found')
   const [connectionStatus, setConnectionStatus] =
     useState('Connecting...')
   const [messages, setMessages] = useState([])
@@ -194,6 +195,11 @@ function ChatRoom() {
           return
         }
 
+        if (pendingMessageRef.current) {
+          pendingMessageRef.current = null
+          setSending(false)
+        }
+
         if (event.code === 4000) {
           shouldReconnectRef.current = false
           setConnectionStatus('Chat expired')
@@ -245,6 +251,9 @@ function ChatRoom() {
           setConnectionStatus(
             response.status === 409 ? 'Chat full' : 'Rate limited'
           )
+          setFailureTitle(
+            response.status === 409 ? 'Chat Is Full' : 'Too Many Requests'
+          )
           setError(result.message || 'Unable to reconnect to chat.')
           setLoading(false)
           return
@@ -281,6 +290,11 @@ function ChatRoom() {
         }
 
         if (!response.ok) {
+          if (response.status === 409) {
+            setFailureTitle('Chat Is Full')
+          } else if (response.status === 429) {
+            setFailureTitle('Too Many Requests')
+          }
           setError(result.message || 'Chat not found.')
           setLoading(false)
           return
@@ -368,7 +382,7 @@ function ChatRoom() {
       <main className="app">
         <section className="hero">
           <div className="logo">VAP CHAT</div>
-          <h1>Chat Not Found</h1>
+          <h1>{failureTitle}</h1>
           <p className="subtitle">
             {error || 'This chat does not exist.'}
           </p>
