@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { normalizeChatCode } from '../src/worker.js'
+import { normalizeChatCode } from '../src/utils/chatCode.js'
 
 test('normalizes valid chat codes without changing their identity', () => {
   assert.equal(normalizeChatCode('abc-def'), 'ABC-DEF')
