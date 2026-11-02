@@ -6,6 +6,20 @@ import { ChatLifecycle } from './utils/chatLifecycle.js'
 const CHAT_CODE_CHARACTERS =
   'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
+const CHAT_CODE_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{3}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{3}$/
+
+export function normalizeChatCode(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = value.trim().toUpperCase()
+
+  return CHAT_CODE_PATTERN.test(normalized)
+    ? normalized
+    : null
+}
+
 function generateChatCode() {
   const randomValues = new Uint32Array(6)
 
@@ -227,17 +241,19 @@ export default {
         ?.trim()
         .toUpperCase()
 
-      if (!code) {
+      const normalizedCode = normalizeChatCode(code)
+
+      if (!normalizedCode) {
         return Response.json(
           {
             status: 'error',
-            message: 'Chat code is required.',
+            message: 'A valid chat code in XXX-XXX format is required.',
           },
           { status: 400 }
         )
       }
 
-      const chatRoomId = env.CHAT_ROOM.idFromName(code)
+      const chatRoomId = env.CHAT_ROOM.idFromName(normalizedCode)
       const chatRoom = env.CHAT_ROOM.get(chatRoomId)
       const response = await chatRoom.fetch(
         new Request('https://chat-room/status')
@@ -254,7 +270,7 @@ export default {
       }
 
       return Response.json({
-        code,
+        code: normalizedCode,
         status: 'found',
       })
     }
@@ -265,9 +281,14 @@ export default {
         ?.trim()
         .toUpperCase()
 
-      if (!code) {
-        return new Response(
-          'Chat code is required.',
+      const normalizedCode = normalizeChatCode(code)
+
+      if (!normalizedCode) {
+        return Response.json(
+          {
+            status: 'error',
+            message: 'A valid chat code in XXX-XXX format is required.',
+          },
           { status: 400 }
         )
       }
@@ -281,7 +302,7 @@ export default {
         )
       }
 
-      const chatRoomId = env.CHAT_ROOM.idFromName(code)
+      const chatRoomId = env.CHAT_ROOM.idFromName(normalizedCode)
       const chatRoom = env.CHAT_ROOM.get(chatRoomId)
       const statusResponse = await chatRoom.fetch(
         new Request('https://chat-room/status')
@@ -302,14 +323,6 @@ export default {
       )
     }
 
-    if (url.pathname === '/api/chat/test') {
-      const chatRoomId = env.CHAT_ROOM.idFromName(
-        'TEST-ROOM'
-      )
-      const chatRoom = env.CHAT_ROOM.get(chatRoomId)
-
-      return chatRoom.fetch(request)
-    }
 
     return new Response(
       'VAP Chat backend is working.'
